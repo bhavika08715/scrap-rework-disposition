@@ -1,0 +1,35 @@
+x-svc: &svc
+  build: .
+  restart: unless-stopped
+  environment: &env
+    REGISTRY_URL: http://registry:8761
+    JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_PASSWORD: postgres }
+    volumes: ["./db/init.sql:/docker-entrypoint-initdb.d/init.sql", "pgdata:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 3s, retries: 20 }
+  registry:
+    <<: *svc
+    command: node services/registry/index.js
+  inspection:
+    <<: *svc
+    command: node services/inspection/index.js
+    environment: { <<: *env, SERVICE_HOST: inspection, DATABASE_URL: "postgres://postgres:postgres@postgres/inspection_db" }
+    depends_on: { postgres: { condition: service_healthy }, registry: { condition: service_started } }
+  disposition:
+    <<: *svc
+    command: node services/disposition/index.js
+    environment: { <<: *env, SERVICE_HOST: disposition, DATABASE_URL: "postgres://postgres:postgres@postgres/disposition_db" }
+    depends_on: { postgres: { condition: service_healthy }, registry: { condition: service_started } }
+  gateway:
+    <<: *svc
+    command: node services/gateway/index.js
+    ports: ["8080:8080"]
+    depends_on: [registry]
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    ports: ["9090:9090"]
+volumes: { pgdata: {} }
